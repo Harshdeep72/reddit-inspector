@@ -72,6 +72,7 @@ _pullpush_disabled_until = 0.0
 _pullpush_cache = {}
 _pullpush_semaphore = None
 _pullpush_last_request_time = 0.0
+_reddit_semaphore = None
 
 
 # ---------- FETCH FUNCTIONS ----------
@@ -233,6 +234,10 @@ async def stealth_fetch(
     session: Optional[cffi_requests.AsyncSession] = None,
 ) -> cffi_requests.Response:
     """Unified fetch using curl_cffi with browser impersonation, proxy support, and direct fallback."""
+    global _reddit_semaphore
+    if _reddit_semaphore is None:
+        _reddit_semaphore = asyncio.Semaphore(3)
+
     headers = {
         "Accept": "application/json, text/html, */*;q=0.9",
         "Accept-Language": "en-US,en;q=0.9",
@@ -248,84 +253,85 @@ async def stealth_fetch(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     }
 
-    # 1. Try with the shared session if provided
-    if session:
-        for attempt in range(3):
-            try:
-                resp = await session.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    allow_redirects=allow_redirects,
-                    timeout=timeout,
-                )
-                if resp.status_code == 429:
-                    wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
-                    print(f"[STEALTH] Shared session got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
-                    await asyncio.sleep(wait_time)
-                    continue
-                
-                if is_valid_response(resp, url):
-                    return resp
-                else:
-                    print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
-                    break
-            except Exception as e:
-                print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
-                break
-
-    # 2. Fallback / Transient configuration loop (Proxy then Direct)
-    proxy = get_healthy_proxy()
-    configs = []
-    if proxy:
-        configs.append(({"http": proxy, "https": proxy}, "Proxy"))
-    configs.append((None, "Direct"))
-    
-    # Cookies for transient session
-    cookie_parts = ["over18=1"]
-    session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
-    if session_cookie:
-        cookie_parts.append(f"reddit_session={session_cookie}")
-    else:
-        cookie_parts.append("csv=1")
-    headers["Cookie"] = "; ".join(cookie_parts)
-    
-    last_error = None
-    for proxies_config, label in configs:
-        current_timeout = 8.0 if label == "Proxy" else timeout
-        for impersonation in IMPERSONATIONS:
+    async with _reddit_semaphore:
+        # 1. Try with the shared session if provided
+        if session:
             for attempt in range(3):
                 try:
-                    async with cffi_requests.AsyncSession(
-                        impersonate=impersonation,
-                        proxies=proxies_config,
-                        verify=False,
-                        timeout=current_timeout,
-                    ) as sess:
-                        resp = await sess.request(
-                            method=method,
-                            url=url,
-                            headers=headers,
-                            allow_redirects=allow_redirects,
-                            timeout=current_timeout,
-                        )
-                    
+                    resp = await session.request(
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        allow_redirects=allow_redirects,
+                        timeout=timeout,
+                    )
                     if resp.status_code == 429:
                         wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
-                        print(f"[STEALTH] [{label}] Got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
+                        print(f"[STEALTH] Shared session got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
                         await asyncio.sleep(wait_time)
                         continue
-                        
+                    
                     if is_valid_response(resp, url):
                         return resp
                     else:
-                        last_error = f"[{label}] Invalid response (validation failed)"
+                        print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
                         break
                 except Exception as e:
-                    last_error = f"[{label}] {e}"
+                    print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
                     break
-                
-    raise Exception(f"All fetch attempts failed. Last error: {last_error}")
+
+        # 2. Fallback / Transient configuration loop (Proxy then Direct)
+        proxy = get_healthy_proxy()
+        configs = []
+        if proxy:
+            configs.append(({"http": proxy, "https": proxy}, "Proxy"))
+        configs.append((None, "Direct"))
+        
+        # Cookies for transient session
+        cookie_parts = ["over18=1"]
+        session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
+        if session_cookie:
+            cookie_parts.append(f"reddit_session={session_cookie}")
+        else:
+            cookie_parts.append("csv=1")
+        headers["Cookie"] = "; ".join(cookie_parts)
+        
+        last_error = None
+        for proxies_config, label in configs:
+            current_timeout = 8.0 if label == "Proxy" else timeout
+            for impersonation in IMPERSONATIONS:
+                for attempt in range(3):
+                    try:
+                        async with cffi_requests.AsyncSession(
+                            impersonate=impersonation,
+                            proxies=proxies_config,
+                            verify=False,
+                            timeout=current_timeout,
+                        ) as sess:
+                            resp = await sess.request(
+                                method=method,
+                                url=url,
+                                headers=headers,
+                                allow_redirects=allow_redirects,
+                                timeout=current_timeout,
+                            )
+                        
+                        if resp.status_code == 429:
+                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
+                            print(f"[STEALTH] [{label}] Got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                            
+                        if is_valid_response(resp, url):
+                            return resp
+                        else:
+                            last_error = f"[{label}] Invalid response (validation failed)"
+                            break
+                    except Exception as e:
+                        last_error = f"[{label}] {e}"
+                        break
+                    
+        raise Exception(f"All fetch attempts failed. Last error: {last_error}")
 
 async def pullpush_fetch(post_id: str, comment_id: str = None) -> Optional[dict]:
     """
