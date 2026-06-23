@@ -70,6 +70,8 @@ _pullpush_failures_lock = None
 _pullpush_consecutive_failures = 0
 _pullpush_disabled_until = 0.0
 _pullpush_cache = {}
+_pullpush_semaphore = None
+_pullpush_last_request_time = 0.0
 
 
 # ---------- FETCH FUNCTIONS ----------
@@ -269,8 +271,10 @@ async def pullpush_fetch(post_id: str, comment_id: str = None) -> Optional[dict]
     """
     Fetch deleted content from Pullpush archive with proper 15s timeout.
     Uses aiohttp directly (no proxy) for better reliability and avoids curl_cffi fingerprint blocking.
+    Implements a 1-second rate-limiting throttle and a retry mechanism for HTTP 429.
     """
     global _pullpush_consecutive_failures, _pullpush_disabled_until, _pullpush_failures_lock
+    global _pullpush_semaphore, _pullpush_last_request_time
     
     # Check circuit breaker
     now = time.time()
@@ -279,9 +283,11 @@ async def pullpush_fetch(post_id: str, comment_id: str = None) -> Optional[dict]
         print(f"[PULLPUSH] Skipping query for {comment_id or post_id} (circuit breaker active for another {remaining}s)")
         return None
 
-    # Lazy-init the lock to avoid loop binding issues on startup
+    # Lazy-init variables to avoid event loop issues on import
     if _pullpush_failures_lock is None:
         _pullpush_failures_lock = asyncio.Lock()
+    if _pullpush_semaphore is None:
+        _pullpush_semaphore = asyncio.Semaphore(1)
 
     # Clean IDs (remove Reddit prefixes)
     clean_post_id = post_id.replace('t3_', '').replace('t1_', '') if post_id else ""
@@ -305,41 +311,61 @@ async def pullpush_fetch(post_id: str, comment_id: str = None) -> Optional[dict]
     has_successful_http_call = False
     
     for url in urls:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    timeout=timeout,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept": "application/json, text/plain, */*",
-                        "Accept-Encoding": "gzip, deflate",
-                    }
-                ) as resp:
-                    has_successful_http_call = True
+        # Try up to 3 times per URL on HTTP 429 rate limit
+        for attempt in range(3):
+            # Throttle requests using the global semaphore and last request timestamp
+            async with _pullpush_semaphore:
+                elapsed = time.time() - _pullpush_last_request_time
+                if elapsed < 1.0:
+                    await asyncio.sleep(1.0 - elapsed)
+                _pullpush_last_request_time = time.time()
+                
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            url,
+                            timeout=timeout,
+                            headers={
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                "Accept": "application/json, text/plain, */*",
+                                "Accept-Encoding": "gzip, deflate",
+                            }
+                        ) as resp:
+                            if resp.status == 200:
+                                has_successful_http_call = True
+                                # Reset consecutive failures lock-safely on successful HTTP response
+                                async with _pullpush_failures_lock:
+                                    _pullpush_consecutive_failures = 0
+                                    
+                                data = await resp.json()
+                                results = data.get("data", [])
+                                if results:
+                                    print(f"[PULLPUSH] ✅ Found {len(results)} results")
+                                    return results[0]
+                                else:
+                                    print(f"[PULLPUSH] ❌ No results found")
+                                    return None
+                            elif resp.status == 429:
+                                wait_seconds = 2.0 * (attempt + 1)
+                                print(f"[PULLPUSH] ❌ HTTP 429 Rate Limited. Attempt {attempt+1}/3. Sleeping {wait_seconds}s...")
+                                await asyncio.sleep(wait_seconds)
+                                continue  # retry the loop
+                            else:
+                                has_successful_http_call = True
+                                print(f"[PULLPUSH] ❌ HTTP {resp.status} for {url}")
+                                break  # exit the retry loop for this URL on other status codes
+                except asyncio.TimeoutError:
+                    print(f"[PULLPUSH] ⏰ Timeout after 15s for {url}")
+                    break
+                except Exception as e:
+                    print(f"[PULLPUSH] ❌ Connection error for {url}: {e}")
+                    break
                     
-                    if resp.status == 200:
-                        # Reset consecutive failures lock-safely on successful HTTP response
-                        async with _pullpush_failures_lock:
-                            _pullpush_consecutive_failures = 0
-                            
-                        data = await resp.json()
-                        results = data.get("data", [])
-                        if results:
-                            print(f"[PULLPUSH] ✅ Found {len(results)} results")
-                            return results[0]
-                        else:
-                            print(f"[PULLPUSH] ❌ No results found")
-                            # It's status 200 with empty list, so we can break early and return None
-                            return None
-                    else:
-                        print(f"[PULLPUSH] ❌ HTTP {resp.status}")
-        except asyncio.TimeoutError:
-            print(f"[PULLPUSH] ⏰ Timeout after 15s for {url}")
-        except Exception as e:
-            print(f"[PULLPUSH] ❌ Connection error for {url}: {e}")
+        # If we successfully communicated (200 OK or 404 Not Found), don't try other URL formats
+        if has_successful_http_call:
+            break
             
-    # If we couldn't get a single successful HTTP response for this query (i.e. all timed out or errored),
+    # If we couldn't get a single successful HTTP response for this query (i.e. all timed out, connection errors, or rate-limited),
     # treat it as a network/server failure and increment the circuit breaker counter.
     if not has_successful_http_call:
         async with _pullpush_failures_lock:
@@ -350,6 +376,7 @@ async def pullpush_fetch(post_id: str, comment_id: str = None) -> Optional[dict]
                 print(f"[PULLPUSH] Circuit breaker tripped! Disabling Pullpush queries for 5 minutes.")
                 
     return None
+
 
 async def pullpush_fetch_cached(post_id: str, comment_id: str = None) -> Optional[dict]:
     """Cached version of pullpush_fetch to avoid duplicate requests."""
