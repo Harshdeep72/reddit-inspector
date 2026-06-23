@@ -344,104 +344,70 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        filteredResults.forEach(r => {
+        filteredResults.forEach((r, index) => {
             const tr = document.createElement("tr");
             
-            // Col 1: Type Badge
+            // Col 1: Index
+            const indexHtml = `<span style="color: var(--text-muted); font-weight: 500;">${index + 1}</span>`;
+            
+            // Col 2: URL
+            const urlHtml = `
+                <div class="url-cell" style="max-width: 450px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <a href="${escapeHtml(r.url)}" target="_blank" class="detail-url" title="${escapeHtml(r.url)}" style="font-weight: 500; font-size: 0.85rem;">
+                        ${escapeHtml(r.url)}
+                    </a>
+                </div>
+            `;
+            
+            // Col 3: Type Badge
             const typeLower = (r.type || "post").toLowerCase();
             const typeBadgeHtml = `<span class="content-type-badge ${typeLower}">${typeLower}</span>`;
             
-            // Col 2: URL & Title Details
-            let detailsHtml = "";
-            if (typeLower === "post") {
-                const title = r.data?.title || "Reddit Post";
-                detailsHtml = `
-                    <div class="detail-cell">
-                        <span class="detail-title">${escapeHtml(title)}</span>
-                        <a href="${escapeHtml(r.url)}" target="_blank" class="detail-url">
-                            <span>Open in Reddit</span>
-                            <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                        </a>
-                    </div>
-                `;
-            } else {
-                const preview = r.data?.body_preview || "";
-                detailsHtml = `
-                    <div class="detail-cell">
-                        <span class="detail-preview">"${escapeHtml(preview)}..."</span>
-                        <a href="${escapeHtml(r.url)}" target="_blank" class="detail-url">
-                            <span>Open Comment Thread</span>
-                            <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                        </a>
-                    </div>
-                `;
-            }
-
-            // Col 3: Status Badge
+            // Col 4: Status Badge
             const statusUpper = (r.status || "UNKNOWN").toUpperCase();
             const badgeClass = getStatusBadgeClass(r.status);
             const statusHtml = `<span class="${badgeClass}">${statusUpper}</span>`;
 
-            // Col 4: Author check details
-            let authorHtml = `<span style="color: var(--text-muted); font-style: italic;">Unknown</span>`;
+            // Col 5 & 6: Author and Author Status
+            let authorNameHtml = `<span style="color: var(--text-muted); font-style: italic;">Unknown</span>`;
+            let authorStatusHtml = `<span class="author-status unknown">UNKNOWN</span>`;
+            
             if (r.author) {
+                authorNameHtml = `<span class="author-name" style="font-weight: 600;">u/${escapeHtml(r.author.username)}</span>`;
                 const authStatus = (r.author.status || "unknown").toLowerCase();
                 let statusBadgeText = authStatus.toUpperCase();
                 let karmaText = "";
                 
                 if (authStatus === "active") {
                     const karmaVal = r.author.total_karma || 0;
-                    karmaText = `<span style="font-size: 0.65rem; color: var(--text-muted);">${formatKarma(karmaVal)} karma</span>`;
+                    karmaText = ` <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: normal;">(${formatKarma(karmaVal)} karma)</span>`;
                 }
-
-                authorHtml = `
-                    <div class="author-info">
-                        <div class="author-details">
-                            <span class="author-name">u/${escapeHtml(r.author.username)}</span>
-                            <span class="author-status ${authStatus}">${statusBadgeText}</span>
-                            ${karmaText}
-                        </div>
-                    </div>
-                `;
+                
+                authorNameHtml += karmaText;
+                authorStatusHtml = `<span class="author-status ${authStatus}">${statusBadgeText}</span>`;
             } else if (r.data?.author) {
-                // Verified deleted author
                 const authorRaw = r.data.author;
                 if (authorRaw === "[deleted]") {
-                    authorHtml = `
-                        <div class="author-info">
-                            <div class="author-details">
-                                <span class="author-name">[deleted]</span>
-                                <span class="author-status deleted">DELETED</span>
-                            </div>
-                        </div>
-                    `;
+                    authorNameHtml = `<span class="author-name" style="color: var(--text-muted);">[deleted]</span>`;
+                    authorStatusHtml = `<span class="author-status deleted">DELETED</span>`;
                 } else {
+                    authorNameHtml = `<span class="author-name" style="font-weight: 600;">u/${escapeHtml(authorRaw)}</span>`;
                     if (pollInterval && includeAuthorCheckbox.checked) {
-                        authorHtml = `
-                            <div class="author-info">
-                                <div class="author-details">
-                                    <span class="author-name">u/${escapeHtml(authorRaw)}</span>
-                                    <span class="author-status unknown">PENDING</span>
-                                </div>
-                            </div>
-                        `;
+                        authorStatusHtml = `<span class="author-status unknown">PENDING</span>`;
                     } else {
-                        authorHtml = `<span class="author-name">u/${escapeHtml(authorRaw)}</span>`;
+                        authorStatusHtml = `<span class="author-status unknown">UNKNOWN</span>`;
                     }
                 }
             }
 
-            // Col 5: Subreddit
-            const sub = r.data?.subreddit ? `r/${escapeHtml(r.data.subreddit)}` : "unknown";
-            const subredditHtml = `<span style="font-weight: 500;">${sub}</span>`;
-
-            // Append row
+            // Append row cells
             tr.innerHTML = `
+                <td>${indexHtml}</td>
+                <td>${urlHtml}</td>
                 <td>${typeBadgeHtml}</td>
-                <td>${detailsHtml}</td>
                 <td>${statusHtml}</td>
-                <td>${authorHtml}</td>
-                <td>${subredditHtml}</td>
+                <td>${authorNameHtml}</td>
+                <td>${authorStatusHtml}</td>
             `;
             resultsTbody.appendChild(tr);
         });
