@@ -388,13 +388,47 @@ def detect_url_type(url: str) -> str:
         return "comment"
     return "post"
 
-async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSession] = None) -> dict:
+async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSession] = None, include_author: bool = True) -> dict:
     """Check a single URL and return result."""
     cache_key = f"url:{url}"
     cached = cache_get(cache_key)
     if cached:
+        # If cached, check if it already has "author" info or if we need to fetch it
+        if include_author and "author" not in cached and cached.get("status") != "error":
+            author = cached.get("data", {}).get("author")
+            if author:
+                if author == "[deleted]":
+                    cached["author"] = {"username": "[deleted]", "status": "deleted"}
+                else:
+                    try:
+                        author_data = await fetch_author(author, session=session)
+                        if author_data:
+                            cached["author"] = author_data
+                    except Exception as e:
+                        print(f"[AUTHOR] Error checking cached user {author}: {e}")
+                        cached["author"] = {"username": author, "status": "unknown"}
+                cache_set(cache_key, cached)
         return cached
     
+    async def attach_author_and_cache(res: dict) -> dict:
+        if res.get("status") == "error":
+            return res
+            
+        author = res.get("data", {}).get("author")
+        if include_author and author:
+            if author == "[deleted]":
+                res["author"] = {"username": "[deleted]", "status": "deleted"}
+            else:
+                try:
+                    author_data = await fetch_author(author, session=session)
+                    if author_data:
+                        res["author"] = author_data
+                except Exception as e:
+                    print(f"[AUTHOR] Error checking user {author}: {e}")
+                    res["author"] = {"username": author, "status": "unknown"}
+        cache_set(cache_key, res)
+        return res
+
     try:
         # Resolve shortlinks (redd.it or /s/ shared links)
         resolved = url
@@ -443,12 +477,10 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                             "author": archive_author
                         }
                     }
-                    cache_set(cache_key, result)
-                    return result
+                    return await attach_author_and_cache(result)
                 if resp.status_code == 403:
                     result = {"url": url, "type": "post", "status": "removed", "data": {"subreddit": subreddit}, "error": "Access Forbidden (Private Subreddit)"}
-                    cache_set(cache_key, result)
-                    return result
+                    return await attach_author_and_cache(result)
                 
                 data = resp.json()
                 
@@ -468,8 +500,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                             "author": archive_author
                         }
                     }
-                    cache_set(cache_key, result)
-                    return result
+                    return await attach_author_and_cache(result)
                     
                 post_data = children[0]["data"]
                 
@@ -507,8 +538,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                         "created_utc": post_data.get("created_utc"),
                     }
                 }
-                cache_set(cache_key, result)
-                return result
+                return await attach_author_and_cache(result)
             except Exception as e:
                 return {"url": url, "type": "post", "status": "error", "error": str(e)}
         
@@ -535,8 +565,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                             "author": archive_author
                         }
                     }
-                    cache_set(cache_key, result)
-                    return result
+                    return await attach_author_and_cache(result)
                     
                 data = resp.json()
                 
@@ -559,8 +588,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                             "author": archive_author
                         }
                     }
-                    cache_set(cache_key, result)
-                    return result
+                    return await attach_author_and_cache(result)
                 
                 body = comment_data.get("body", "")
                 author = comment_data.get("author")
@@ -593,10 +621,12 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                         "post_status": post_status,
                     }
                 }
-                cache_set(cache_key, result)
-                return result
+                return await attach_author_and_cache(result)
             except Exception as e:
                 return {"url": url, "type": "comment", "status": "error", "error": str(e)}
+                
+    except Exception as e:
+        return {"url": url, "type": "unknown", "status": "error", "error": str(e)}
                 
     except Exception as e:
         return {"url": url, "type": "unknown", "status": "error", "error": str(e)}
@@ -705,7 +735,7 @@ async def process_bulk_job(job_id: str, urls: list, include_author: bool):
     try:
         for i in range(0, total, chunk_size):
             chunk = urls[i:i+chunk_size]
-            tasks = [check_single_url(u, session=session) for u in chunk]
+            tasks = [check_single_url(u, session=session, include_author=include_author) for u in chunk]
             chunk_results = await asyncio.gather(*tasks, return_exceptions=False)
             
             for r in chunk_results:
@@ -720,34 +750,6 @@ async def process_bulk_job(job_id: str, urls: list, include_author: bool):
             # Polite spacing between requests to old.reddit
             if i + chunk_size < total:
                 await asyncio.sleep(4)
-        
-        # Fetch authors if requested
-        if include_author:
-            authors = list({
-                r.get("data", {}).get("author")
-                for r in results
-                if r.get("data") and r["data"].get("author")
-                and r["data"]["author"] not in ("[deleted]", None)
-            })
-            
-            author_cache = {}
-            for idx, author in enumerate(authors):
-                # Polite spacing between user profile checks
-                if idx > 0 and idx % 4 == 0:
-                    await asyncio.sleep(2)
-                try:
-                    author_data = await fetch_author(author, session=session)
-                    if author_data:
-                        author_cache[author] = author_data
-                except Exception as e:
-                    print(f"[AUTHOR] Error checking user {author}: {e}")
-            
-            for r in results:
-                author = r.get("data", {}).get("author")
-                if author and author in author_cache:
-                    r["author"] = author_cache[author]
-                elif author:
-                    r["author"] = {"username": author, "status": "unknown"}
                     
     finally:
         try:
