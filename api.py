@@ -107,7 +107,7 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
     
     last_error = None
     for proxies_config, label in configs:
-        current_timeout = 8.0 if label == "Proxy" else 15.0
+        current_timeout = 20.0 if label == "Proxy" else 15.0
         max_attempts = 5 if label == "Proxy" else 1
         
         for attempt in range(max_attempts):
@@ -312,7 +312,7 @@ async def stealth_fetch(
         
         last_error = None
         for proxies_config, label in configs:
-            current_timeout = 8.0 if label == "Proxy" else timeout
+            current_timeout = 20.0 if label == "Proxy" else timeout
             for impersonation in IMPERSONATIONS:
                 for attempt in range(3):
                     try:
@@ -545,7 +545,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
         if "redd.it" in url or "/s/" in url:
             try:
                 # Use GET with allow_redirects=False to only fetch the redirect header (saves 99.9% bandwidth!)
-                resp = await stealth_fetch(url, method="GET", allow_redirects=False, timeout=10.0, session=session)
+                resp = await stealth_fetch(url, method="GET", allow_redirects=False, timeout=20.0, session=session)
                 if resp.status_code in (301, 302, 307, 308):
                     loc = resp.headers.get("location") or resp.headers.get("Location")
                     if loc:
