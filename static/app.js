@@ -231,15 +231,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 progressPercentage.textContent = `${percentage}%`;
                 progressCounts.textContent = `${progress} / ${total} Completed`;
                 
-                if (job.status === "running") {
+                if (job.status === "running" || job.status === "accepted") {
                     progressStatusText.textContent = `Scraping content: ${progress} checked. Pausing between batches to stay stealth...`;
+                    if (job.results && job.results.length > 0) {
+                        jobResults = job.results;
+                        renderDashboard(jobResults);
+                    }
                 } else if (job.status === "done") {
                     clearInterval(pollInterval);
-                    progressStatusText.textContent = "Job completed! Processing results table...";
+                    progressStatusText.textContent = "Job completed! Finalizing results table...";
                     jobResults = job.results;
                     
                     setTimeout(() => {
-                        // Render results dashboard
+                        // Render results dashboard and hide progress card
                         stateProgress.classList.add("hidden");
                         renderDashboard(jobResults);
                         resetFormControls();
