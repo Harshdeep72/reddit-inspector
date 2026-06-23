@@ -64,6 +64,12 @@ def cache_set(key: str, data: Any):
 # ---------- BULK JOB STORE ----------
 _bulk_jobs = {}
 
+# ---------- PULLPUSH CIRCUIT BREAKER ----------
+_pullpush_failures_lock = None
+_pullpush_consecutive_failures = 0
+_pullpush_disabled_until = 0.0
+
+
 # ---------- FETCH FUNCTIONS ----------
 IMPERSONATIONS = ["chrome120", "chrome110", "chrome101"]
 from urllib.parse import urljoin
@@ -259,20 +265,38 @@ async def stealth_fetch(
 
 async def fetch_author_from_archive(content_id: str, content_type: str) -> Optional[str]:
     """Query Pullpush public archive database to find authors of deleted or removed posts/comments."""
+    global _pullpush_consecutive_failures, _pullpush_disabled_until, _pullpush_failures_lock
+    
+    # Check circuit breaker
+    now = time.time()
+    if now < _pullpush_disabled_until:
+        remaining = int(_pullpush_disabled_until - now)
+        print(f"[ARCHIVE] Skipping Pullpush query for {content_id} (circuit breaker active for another {remaining}s)")
+        return None
+
+    # Lazy-init the lock to avoid loop binding issues on startup
+    if _pullpush_failures_lock is None:
+        _pullpush_failures_lock = asyncio.Lock()
+
     try:
+        # Use newer endpoints primarily, legacy as fallbacks
         if content_type == "post":
             urls = [
-                f"https://api.pullpush.io/reddit/submission/search?ids={content_id}",
-                f"https://api.pullpush.io/reddit/submission/search?ids=t3_{content_id}"
+                f"https://api.pullpush.io/reddit/search/submission/?ids={content_id}",
+                f"https://api.pullpush.io/reddit/search/submission/?ids=t3_{content_id}",
+                f"https://api.pullpush.io/reddit/submission/search?ids={content_id}"
             ]
         else:
             urls = [
-                f"https://api.pullpush.io/reddit/comment/search?ids={content_id}",
-                f"https://api.pullpush.io/reddit/comment/search?ids=t1_{content_id}"
+                f"https://api.pullpush.io/reddit/search/comment/?ids={content_id}",
+                f"https://api.pullpush.io/reddit/search/comment/?ids=t1_{content_id}",
+                f"https://api.pullpush.io/reddit/comment/search?ids={content_id}"
             ]
             
         proxy = get_healthy_proxy()
         proxies_config = {"http": proxy, "https": proxy} if proxy else None
+        
+        has_successful_http_call = False
         
         for url in urls:
             # Try direct (no proxy) first since pullpush doesn't block direct requests
@@ -282,14 +306,21 @@ async def fetch_author_from_archive(content_id: str, content_type: str) -> Optio
                     continue
                 current_proxies = proxies_config if use_proxy else None
                 try:
+                    # Lower timeout to 2.5s to fail fast
                     async with cffi_requests.AsyncSession(
                         impersonate="chrome120",
                         proxies=current_proxies,
                         verify=False,
-                        timeout=5.0,
+                        timeout=2.5,
                     ) as session:
                         resp = await session.get(url)
+                        has_successful_http_call = True
+                        
                         if resp.status_code == 200:
+                            # Reset consecutive failures lock-safely on successful HTTP response
+                            async with _pullpush_failures_lock:
+                                _pullpush_consecutive_failures = 0
+                                
                             data = resp.json()
                             results = data.get("data", [])
                             if results:
@@ -301,9 +332,27 @@ async def fetch_author_from_archive(content_id: str, content_type: str) -> Optio
                             break
                 except Exception as e:
                     print(f"[ARCHIVE] Pullpush request failed for {url} (proxy={use_proxy}): {e}")
+                    
+            # If we successfully communicated with Pullpush on any attempt for this URL, 
+            # don't try other URL formats to avoid unnecessary spam
+            if has_successful_http_call:
+                break
+                
+        # If we couldn't get a single successful HTTP response for this query (i.e. all timed out or errored),
+        # treat it as a network/server failure and increment the circuit breaker counter.
+        if not has_successful_http_call:
+            async with _pullpush_failures_lock:
+                _pullpush_consecutive_failures += 1
+                print(f"[ARCHIVE] Consecutive Pullpush network failures: {_pullpush_consecutive_failures}/3")
+                if _pullpush_consecutive_failures >= 3:
+                    _pullpush_disabled_until = time.time() + 300.0  # Disable for 5 minutes
+                    print(f"[ARCHIVE] Circuit breaker tripped! Disabling Pullpush queries for 5 minutes.")
+                    
     except Exception as e:
         print(f"[ARCHIVE] Error in fetch_author_from_archive: {e}")
+        
     return None
+
 
 # ---------- URL CHECKING ----------
 def detect_url_type(url: str) -> str:
