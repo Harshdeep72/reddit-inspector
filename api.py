@@ -81,13 +81,14 @@ from urllib.parse import urljoin
 
 async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncSession:
     """Creates and initializes a cffi_requests.AsyncSession by solving the JS challenge.
-    Falls back to direct connection if proxy fails.
+    Retries proxy if it fails, and only falls back to Direct if no proxy is configured.
     """
     configs = []
     if proxy:
         configs.append(({"http": proxy, "https": proxy}, "Proxy"))
-    configs.append((None, "Direct"))
-    
+    else:
+        configs.append((None, "Direct"))
+        
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "en-US,en;q=0.9",
@@ -107,8 +108,10 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
     last_error = None
     for proxies_config, label in configs:
         current_timeout = 8.0 if label == "Proxy" else 15.0
+        max_attempts = 5 if label == "Proxy" else 1
         
-        for impersonation in IMPERSONATIONS:
+        for attempt in range(max_attempts):
+            impersonation = IMPERSONATIONS[attempt % len(IMPERSONATIONS)]
             session = None
             try:
                 session = cffi_requests.AsyncSession(
@@ -130,8 +133,17 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                 resp = await session.get(url, headers=headers, timeout=current_timeout)
                 
                 if resp.status_code == 403:
-                    last_error = f"[{label}] 403 Forbidden (Blocked by Network Security)"
+                    last_error = f"[{label}] 403 Forbidden"
                     await session.close()
+                    if label == "Proxy":
+                        await asyncio.sleep(1.0)
+                    continue
+                    
+                if resp.status_code == 429:
+                    last_error = f"[{label}] 429 Too Many Requests"
+                    await session.close()
+                    if label == "Proxy":
+                        await asyncio.sleep(2.0)
                     continue
                 
                 html = resp.text
@@ -180,9 +192,11 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                         await session.close()
                     except:
                         pass
+                if label == "Proxy":
+                    await asyncio.sleep(1.0)
                 continue
-                
     raise Exception(f"Failed to establish Reddit session. Last error: {last_error}")
+
 
 def is_valid_response(resp, url: str) -> bool:
     """Validate that the response from the proxy/network is a valid Reddit response and not a block page."""
