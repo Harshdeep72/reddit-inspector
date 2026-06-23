@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reddit Inspector Dashboard</title>
+    <meta name="description" content="Audit Reddit posts, comments, and user accounts in bulk. Stealth scraper dashboard.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Main Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar / Navigation -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="brand-icon">
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="glow-svg"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                </div>
+                <div class="brand-text">
+                    <h1>REDDIT INSPECTOR</h1>
+                    <span>Stealth Audit Console</span>
+                </div>
+            </div>
+            
+            <div class="api-status-pill" id="api-status">
+                <span class="status-indicator warning"></span>
+                <span class="status-label">Connecting Backend...</span>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Workspace -->
+        <main class="dashboard-grid">
+            <!-- Left Panel: Configurations & Inputs -->
+            <section class="panel-left">
+                <div class="dashboard-card glass-panel card-glow">
+                    <h2 class="section-title">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                        Configure Audit Job
+                    </h2>
+                    
+                    <form id="audit-form" class="audit-form">
+                        <!-- API Endpoint Selector -->
+                        <div class="form-group">
+                            <label for="api-base-url">API Base URL</label>
+                            <div class="input-with-icon">
+                                <input type="url" id="api-base-url" placeholder="https://your-space-name.hf.space" value="" required>
+                                <button type="button" id="btn-ping" class="btn-icon" title="Ping API Host">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M23 12a11 11 0 0 1-2.94 7.71L17 16.75A7 7 0 1 0 7 16.75L3.94 19.71A11 11 0 0 1 23 12z"></path><path d="M17 12a5 5 0 0 1-.9 3l-3-3H17z"></path></svg>
+                                </button>
+                            </div>
+                            <span class="help-text">Point this to your Hugging Face Space API URL.</span>
+                        </div>
+
+                        <!-- Target URLs Textarea -->
+                        <div class="form-group">
+                            <label for="reddit-urls">Reddit URLs <span class="badge" id="url-count-badge">0 / 500</span></label>
+                            <textarea id="reddit-urls" rows="12" placeholder="Paste Reddit post or comment URLs here...&#10;One URL per line. E.g.&#10;https://www.reddit.com/r/pics/comments/abc123/title/&#10;https://www.reddit.com/r/news/comments/xyz456/_/def789/" required></textarea>
+                            <span class="help-text">Supports post links, comment deep links, or shortlinks (redd.it, /s/).</span>
+                        </div>
+
+                        <!-- Options -->
+                        <div class="options-group">
+                            <div class="checkbox-container">
+                                <input type="checkbox" id="include-author" name="include-author" checked>
+                                <label for="include-author" class="checkbox-label">
+                                    <span class="custom-checkbox"></span>
+                                    <span>Verify Author Account Status</span>
+                                </label>
+                            </div>
+                            <span class="checkbox-help">Checks if authors of the posts/comments are active, suspended, or deleted.</span>
+                        </div>
+
+                        <!-- Submit Button -->
+                        <button type="submit" id="btn-submit" class="btn-primary animate-pulse">
+                            <span>Analyze URLs</span>
+                            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Right Panel: Results & Analytics -->
+            <section class="panel-right">
+                <!-- Welcome/Empty State -->
+                <div class="dashboard-card glass-panel welcome-card" id="state-welcome">
+                    <div class="hero-graphic">
+                        <div class="orb"></div>
+                        <div class="shield">
+                            <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        </div>
+                    </div>
+                    <h2>No Active Audit Job</h2>
+                    <p>Enter Reddit URLs on the left config panel to run a stealth check using Hugging Face Space scraping and proxies.</p>
+                </div>
+
+                <!-- Progress State -->
+                <div class="dashboard-card glass-panel progress-card hidden" id="state-progress">
+                    <div class="progress-header">
+                        <div>
+                            <h3>Audit Progress</h3>
+                            <span id="job-id-display">Job ID: ...</span>
+                        </div>
+                        <span class="progress-percentage" id="progress-percentage">0%</span>
+                    </div>
+                    
+                    <!-- Progress Bar -->
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="progress-bar-fill" style="width: 0%;"></div>
+                    </div>
+                    
+                    <div class="progress-meta">
+                        <span id="progress-status-text">Starting background job...</span>
+                        <span id="progress-counts">0 / 0 Completed</span>
+                    </div>
+                    
+                    <div class="warning-alert">
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        <span>Audit executes at 5-10s intervals to avoid Reddit rate limit triggers. Please leave page open.</span>
+                    </div>
+                </div>
+
+                <!-- Finished State / Summary Cards -->
+                <div class="summary-cards-container hidden" id="results-summary">
+                    <div class="stat-card live">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stat-val" id="stat-live">0</div>
+                        <div class="stat-label">Live Content</div>
+                    </div>
+                    <div class="stat-card removed">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                        </div>
+                        <div class="stat-val" id="stat-removed">0</div>
+                        <div class="stat-label">Removed / Spam</div>
+                    </div>
+                    <div class="stat-card deleted">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><line x1="18" y1="9" x2="12" y2="15"></line><line x1="12" y1="9" x2="18" y2="15"></line></svg>
+                        </div>
+                        <div class="stat-val" id="stat-deleted">0</div>
+                        <div class="stat-label">Deleted Content</div>
+                    </div>
+                    <div class="stat-card error">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                        </div>
+                        <div class="stat-val" id="stat-error">0</div>
+                        <div class="stat-label">Fetch Errors</div>
+                    </div>
+                </div>
+
+                <!-- Results Table Card -->
+                <div class="dashboard-card glass-panel results-card hidden" id="results-table-card">
+                    <div class="results-toolbar">
+                        <!-- Filters -->
+                        <div class="filter-tabs">
+                            <button class="filter-tab active" data-filter="all">All <span id="count-all">(0)</span></button>
+                            <button class="filter-tab" data-filter="live">Live <span id="count-live">(0)</span></button>
+                            <button class="filter-tab" data-filter="removed">Removed/Spam <span id="count-removed">(0)</span></button>
+                            <button class="filter-tab" data-filter="deleted">Deleted <span id="count-deleted">(0)</span></button>
+                            <button class="filter-tab" data-filter="error">Errors <span id="count-error">(0)</span></button>
+                        </div>
+                        
+                        <!-- Search & Export -->
+                        <div class="toolbar-actions">
+                            <div class="search-box">
+                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                                <input type="text" id="search-input" placeholder="Search results...">
+                            </div>
+                            
+                            <div class="dropdown">
+                                <button class="btn-secondary" id="btn-export">
+                                    <span>Export</span>
+                                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                </button>
+                                <div class="dropdown-content">
+                                    <button id="export-csv">As CSV</button>
+                                    <button id="export-json">As JSON</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Table View -->
+                    <div class="table-responsive">
+                        <table class="results-table">
+                            <thead>
+                                <tr>
+                                    <th>Content Type</th>
+                                    <th>URL & Details</th>
+                                    <th>Status</th>
+                                    <th>Author Info</th>
+                                    <th>Subreddit</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-tbody">
+                                <!-- Dynamic rows inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Application Script -->
+    <script src="app.js"></script>
+</body>
+</html>
