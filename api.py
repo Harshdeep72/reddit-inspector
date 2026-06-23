@@ -32,6 +32,7 @@ app.add_middleware(
 PROXY_STRING = os.environ.get("PROXY_STRING", "").strip()
 PROXIES = []
 IS_SINGLE_ROTATING_GATEWAY = False
+_proxy_disabled_until = 0.0
 
 def load_proxies():
     global PROXIES, IS_SINGLE_ROTATING_GATEWAY
@@ -45,7 +46,12 @@ def load_proxies():
 load_proxies()
 
 def get_healthy_proxy() -> Optional[str]:
-    return PROXIES[0] if PROXIES else None
+    global _proxy_disabled_until
+    if not PROXIES:
+        return None
+    if time.time() < _proxy_disabled_until:
+        return None
+    return PROXIES[0]
 
 # ---------- CACHING ----------
 CACHE_TTL = 3600
@@ -83,6 +89,7 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
     """Creates and initializes a cffi_requests.AsyncSession by solving the JS challenge.
     Retries proxy if it fails, and only falls back to Direct if no proxy is configured.
     """
+    global _proxy_disabled_until
     configs = []
     if proxy:
         configs.append(({"http": proxy, "https": proxy}, "Proxy"))
@@ -187,6 +194,9 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                     
             except Exception as e:
                 last_error = f"[{label}] {e}"
+                if label == "Proxy" and ("timeout" in str(e).lower() or "curl: (28)" in str(e) or "curl: (7)" in str(e)):
+                    print(f"[PROXY] Disabling proxy for 5 minutes due to session establishment timeout/refusal: {e}")
+                    _proxy_disabled_until = time.time() + 300.0
                 if session:
                     try:
                         await session.close()
@@ -248,7 +258,7 @@ async def stealth_fetch(
     session: Optional[cffi_requests.AsyncSession] = None,
 ) -> cffi_requests.Response:
     """Unified fetch using curl_cffi with browser impersonation, proxy support, and direct fallback."""
-    global _reddit_semaphore
+    global _reddit_semaphore, _proxy_disabled_until
     if _reddit_semaphore is None:
         _reddit_semaphore = asyncio.Semaphore(3)
 
@@ -270,29 +280,34 @@ async def stealth_fetch(
     async with _reddit_semaphore:
         # 1. Try with the shared session if provided
         if session:
-            for attempt in range(3):
-                try:
-                    resp = await session.request(
-                        method=method,
-                        url=url,
-                        headers=headers,
-                        allow_redirects=allow_redirects,
-                        timeout=timeout,
-                    )
-                    if resp.status_code == 429:
-                        wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
-                        print(f"[STEALTH] Shared session got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
-                        await asyncio.sleep(wait_time)
-                        continue
-                    
-                    if is_valid_response(resp, url):
-                        return resp
-                    else:
-                        print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
+            # Skip shared session if it was initialized with a proxy that is now disabled
+            if not PROXIES or get_healthy_proxy() is not None:
+                for attempt in range(3):
+                    try:
+                        resp = await session.request(
+                            method=method,
+                            url=url,
+                            headers=headers,
+                            allow_redirects=allow_redirects,
+                            timeout=timeout,
+                        )
+                        if resp.status_code == 429:
+                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
+                            print(f"[STEALTH] Shared session got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        
+                        if is_valid_response(resp, url):
+                            return resp
+                        else:
+                            print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
+                            break
+                    except Exception as e:
+                        print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
+                        if PROXIES and ("timeout" in str(e).lower() or "curl: (28)" in str(e) or "curl: (7)" in str(e)):
+                            print(f"[PROXY] Disabling proxy for 5 minutes due to shared session timeout/refusal: {e}")
+                            _proxy_disabled_until = time.time() + 300.0
                         break
-                except Exception as e:
-                    print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
-                    break
 
         # 2. Fallback / Transient configuration loop (Proxy then Direct)
         proxy = get_healthy_proxy()
@@ -312,8 +327,16 @@ async def stealth_fetch(
         
         last_error = None
         for proxies_config, label in configs:
+            # Dynamic check: if proxy was disabled mid-job, skip the Proxy configuration
+            if label == "Proxy" and get_healthy_proxy() is None:
+                continue
+                
             current_timeout = 20.0 if label == "Proxy" else timeout
+            proxy_failed = False
+            
             for impersonation in IMPERSONATIONS:
+                if proxy_failed:
+                    break
                 for attempt in range(3):
                     try:
                         async with cffi_requests.AsyncSession(
@@ -343,6 +366,10 @@ async def stealth_fetch(
                             break
                     except Exception as e:
                         last_error = f"[{label}] {e}"
+                        if label == "Proxy" and ("timeout" in str(e).lower() or "curl: (28)" in str(e) or "curl: (7)" in str(e)):
+                            print(f"[PROXY] Disabling proxy for 5 minutes due to transient timeout/refusal: {e}")
+                            _proxy_disabled_until = time.time() + 300.0
+                            proxy_failed = True
                         break
                     
         raise Exception(f"All fetch attempts failed. Last error: {last_error}")
