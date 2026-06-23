@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from curl_cffi import requests as cffi_requests
+import aiohttp
 
 app = FastAPI(title="Reddit Inspector API")
 
@@ -68,6 +69,7 @@ _bulk_jobs = {}
 _pullpush_failures_lock = None
 _pullpush_consecutive_failures = 0
 _pullpush_disabled_until = 0.0
+_pullpush_cache = {}
 
 
 # ---------- FETCH FUNCTIONS ----------
@@ -263,95 +265,120 @@ async def stealth_fetch(
                 
     raise Exception(f"All fetch attempts failed. Last error: {last_error}")
 
-async def fetch_author_from_archive(content_id: str, content_type: str) -> Optional[str]:
-    """Query Pullpush public archive database to find authors of deleted or removed posts/comments."""
+async def pullpush_fetch(post_id: str, comment_id: str = None) -> Optional[dict]:
+    """
+    Fetch deleted content from Pullpush archive with proper 15s timeout.
+    Uses aiohttp directly (no proxy) for better reliability and avoids curl_cffi fingerprint blocking.
+    """
     global _pullpush_consecutive_failures, _pullpush_disabled_until, _pullpush_failures_lock
     
     # Check circuit breaker
     now = time.time()
     if now < _pullpush_disabled_until:
         remaining = int(_pullpush_disabled_until - now)
-        print(f"[ARCHIVE] Skipping Pullpush query for {content_id} (circuit breaker active for another {remaining}s)")
+        print(f"[PULLPUSH] Skipping query for {comment_id or post_id} (circuit breaker active for another {remaining}s)")
         return None
 
     # Lazy-init the lock to avoid loop binding issues on startup
     if _pullpush_failures_lock is None:
         _pullpush_failures_lock = asyncio.Lock()
 
-    try:
-        # Use newer endpoints primarily, legacy as fallbacks
-        if content_type == "post":
-            urls = [
-                f"https://api.pullpush.io/reddit/search/submission/?ids={content_id}",
-                f"https://api.pullpush.io/reddit/search/submission/?ids=t3_{content_id}",
-                f"https://api.pullpush.io/reddit/submission/search?ids={content_id}"
-            ]
-        else:
-            urls = [
-                f"https://api.pullpush.io/reddit/search/comment/?ids={content_id}",
-                f"https://api.pullpush.io/reddit/search/comment/?ids=t1_{content_id}",
-                f"https://api.pullpush.io/reddit/comment/search?ids={content_id}"
-            ]
+    # Clean IDs (remove Reddit prefixes)
+    clean_post_id = post_id.replace('t3_', '').replace('t1_', '') if post_id else ""
+    
+    if comment_id:
+        clean_comment_id = comment_id.replace('t3_', '').replace('t1_', '')
+        # Try both the search comment endpoint and fallback to comment/search
+        urls = [
+            f"https://api.pullpush.io/reddit/search/comment/?ids={clean_comment_id}",
+            f"https://api.pullpush.io/reddit/comment/search?ids={clean_comment_id}"
+        ]
+        print(f"[PULLPUSH] Fetching comment {clean_comment_id}")
+    else:
+        urls = [
+            f"https://api.pullpush.io/reddit/search/submission/?ids={clean_post_id}",
+            f"https://api.pullpush.io/reddit/submission/search?ids={clean_post_id}"
+        ]
+        print(f"[PULLPUSH] Fetching post {clean_post_id}")
+
+    timeout = aiohttp.ClientTimeout(total=15.0)  # 15 seconds as requested
+    has_successful_http_call = False
+    
+    for url in urls:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    timeout=timeout,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept": "application/json, text/plain, */*",
+                        "Accept-Encoding": "gzip, deflate",
+                    }
+                ) as resp:
+                    has_successful_http_call = True
+                    
+                    if resp.status == 200:
+                        # Reset consecutive failures lock-safely on successful HTTP response
+                        async with _pullpush_failures_lock:
+                            _pullpush_consecutive_failures = 0
+                            
+                        data = await resp.json()
+                        results = data.get("data", [])
+                        if results:
+                            print(f"[PULLPUSH] ✅ Found {len(results)} results")
+                            return results[0]
+                        else:
+                            print(f"[PULLPUSH] ❌ No results found")
+                            # It's status 200 with empty list, so we can break early and return None
+                            return None
+                    else:
+                        print(f"[PULLPUSH] ❌ HTTP {resp.status}")
+        except asyncio.TimeoutError:
+            print(f"[PULLPUSH] ⏰ Timeout after 15s for {url}")
+        except Exception as e:
+            print(f"[PULLPUSH] ❌ Connection error for {url}: {e}")
             
-        proxy = get_healthy_proxy()
-        proxies_config = {"http": proxy, "https": proxy} if proxy else None
-        
-        has_successful_http_call = False
-        
-        for url in urls:
-            # Try direct (no proxy) first since pullpush doesn't block direct requests
-            # and proxies often time out. Fall back to proxy if direct fails.
-            for use_proxy in [False, True]:
-                if use_proxy and not proxy:
-                    continue
-                current_proxies = proxies_config if use_proxy else None
-                try:
-                    # Lower timeout to 2.5s to fail fast
-                    async with cffi_requests.AsyncSession(
-                        impersonate="chrome120",
-                        proxies=current_proxies,
-                        verify=False,
-                        timeout=2.5,
-                    ) as session:
-                        resp = await session.get(url)
-                        has_successful_http_call = True
-                        
-                        if resp.status_code == 200:
-                            # Reset consecutive failures lock-safely on successful HTTP response
-                            async with _pullpush_failures_lock:
-                                _pullpush_consecutive_failures = 0
-                                
-                            data = resp.json()
-                            results = data.get("data", [])
-                            if results:
-                                author = results[0].get("author")
-                                if author and author not in ("[deleted]", "[removed]", "None", ""):
-                                    print(f"[ARCHIVE] Found author '{author}' for {content_type} {content_id} (proxy={use_proxy})")
-                                    return author
-                            # If request succeeded but returned no data, no need to retry with proxy
-                            break
-                except Exception as e:
-                    print(f"[ARCHIVE] Pullpush request failed for {url} (proxy={use_proxy}): {e}")
-                    
-            # If we successfully communicated with Pullpush on any attempt for this URL, 
-            # don't try other URL formats to avoid unnecessary spam
-            if has_successful_http_call:
-                break
+    # If we couldn't get a single successful HTTP response for this query (i.e. all timed out or errored),
+    # treat it as a network/server failure and increment the circuit breaker counter.
+    if not has_successful_http_call:
+        async with _pullpush_failures_lock:
+            _pullpush_consecutive_failures += 1
+            print(f"[PULLPUSH] Consecutive network failures: {_pullpush_consecutive_failures}/3")
+            if _pullpush_consecutive_failures >= 3:
+                _pullpush_disabled_until = time.time() + 300.0  # Disable for 5 minutes
+                print(f"[PULLPUSH] Circuit breaker tripped! Disabling Pullpush queries for 5 minutes.")
                 
-        # If we couldn't get a single successful HTTP response for this query (i.e. all timed out or errored),
-        # treat it as a network/server failure and increment the circuit breaker counter.
-        if not has_successful_http_call:
-            async with _pullpush_failures_lock:
-                _pullpush_consecutive_failures += 1
-                print(f"[ARCHIVE] Consecutive Pullpush network failures: {_pullpush_consecutive_failures}/3")
-                if _pullpush_consecutive_failures >= 3:
-                    _pullpush_disabled_until = time.time() + 300.0  # Disable for 5 minutes
-                    print(f"[ARCHIVE] Circuit breaker tripped! Disabling Pullpush queries for 5 minutes.")
-                    
+    return None
+
+async def pullpush_fetch_cached(post_id: str, comment_id: str = None) -> Optional[dict]:
+    """Cached version of pullpush_fetch to avoid duplicate requests."""
+    cache_key = f"{post_id}:{comment_id}" if comment_id else post_id
+    if cache_key in _pullpush_cache:
+        print(f"[PULLPUSH] 🎯 Cache hit for {cache_key}")
+        return _pullpush_cache[cache_key]
+    
+    result = await pullpush_fetch(post_id, comment_id)
+    # Cache all results, including None/empty, to prevent spamming Pullpush for missing data
+    _pullpush_cache[cache_key] = result
+    return result
+
+async def fetch_author_from_archive(content_id: str, content_type: str) -> Optional[str]:
+    """Query Pullpush public archive database to find authors of deleted or removed posts/comments."""
+    try:
+        if content_type == "post":
+            data = await pullpush_fetch_cached(post_id=content_id)
+        else:
+            data = await pullpush_fetch_cached(post_id="", comment_id=content_id)
+            
+        if data:
+            author = data.get("author")
+            if author and author not in ("[deleted]", "[removed]", "None", ""):
+                return author
     except Exception as e:
         print(f"[ARCHIVE] Error in fetch_author_from_archive: {e}")
-        
     return None
+
 
 
 # ---------- URL CHECKING ----------
