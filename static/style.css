@@ -886,14 +886,46 @@ body {
 }
 
 .author-status {
-    font-size: 0.65rem;
-    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    margin-top: 0.2rem;
+    width: fit-content;
+    letter-spacing: 0.03em;
 }
 
-.author-status.active { color: var(--live); }
-.author-status.suspended { color: var(--removed); font-weight: 700; }
-.author-status.deleted { color: var(--warning); }
-.author-status.unknown { color: var(--text-muted); }
+.author-status.active {
+    background: var(--live-glow);
+    color: var(--live);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.author-status.suspended {
+    background: var(--removed-glow);
+    color: var(--removed);
+    border: 1px solid rgba(244, 63, 94, 0.2);
+}
+
+.author-status.deleted {
+    background: var(--warning-glow);
+    color: var(--warning);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.author-status.unknown {
+    background: rgba(156, 163, 175, 0.1);
+    color: var(--text-muted);
+    border: 1px solid rgba(156, 163, 175, 0.15);
+}
+
+.author-status.error {
+    background: var(--error-glow);
+    color: var(--error);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
 
 /* Animation Keyframes */
 @keyframes pulse-orb {
