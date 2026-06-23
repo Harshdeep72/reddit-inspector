@@ -489,6 +489,9 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                 body = comment_data.get("body", "")
                 author = comment_data.get("author")
                 
+                # Check for deleted author first before reassigning
+                is_deleted = (author == "[deleted]" or body == "[deleted]")
+                
                 if author == "[deleted]":
                     archive_author = await fetch_author_from_archive(comment_id, "comment")
                     if archive_author:
@@ -496,7 +499,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                 
                 if body == "[removed]":
                     status = "removed"
-                elif body == "[deleted]" and author == "[deleted]":
+                elif is_deleted:
                     status = "deleted"
                 else:
                     status = "live"
@@ -729,6 +732,19 @@ async def health():
         "proxy": bool(PROXIES),
         "cached_keys_count": len(_cache_store),
         "active_jobs_count": len([j for j in _bulk_jobs.values() if j["status"] == "running"])
+    }
+
+@app.get("/debug/pullpush/{post_id}")
+async def debug_pullpush(post_id: str, comment_id: str = None):
+    """Debug endpoint to test Pullpush archive retrieval."""
+    content_type = "comment" if comment_id else "post"
+    content_id = comment_id if comment_id else post_id
+    result = await fetch_author_from_archive(content_id, content_type)
+    return {
+        "success": bool(result),
+        "author": result,
+        "content_type": content_type,
+        "content_id": content_id
     }
 
 # ---------- STARTUP ----------
