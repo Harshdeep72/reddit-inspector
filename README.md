@@ -37,7 +37,7 @@ The frontend is a single-page application (SPA) optimized for screen space and b
   2. Spawns a progressive polling interval checking `/api/bulk/status/{job_id}` every 2 seconds.
   3. Dynamically renders rows as results return from the API.
   4. While the scraping job is running, displays a gray `PENDING` badge for authors because author status checks are deferred to run at the end.
-  5. Implements local keyword search, content-type filtering tabs, and CSV/JSON report generators.
+  5. Implements local keyword search, content-type filtering tabs, and CSV/JSON/Excel report generators.
 
 ---
 
