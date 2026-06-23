@@ -183,6 +183,48 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                 
     raise Exception(f"Failed to establish Reddit session. Last error: {last_error}")
 
+def is_valid_response(resp, url: str) -> bool:
+    """Validate that the response from the proxy/network is a valid Reddit response and not a block page."""
+    # 1. Allow expected status codes. 
+    # For redirect resolution, we expect 301, 302, 307, 308.
+    # For others, we expect 200, 403 (private subreddits), 404 (deleted content).
+    if resp.status_code not in (200, 301, 302, 307, 308, 403, 404):
+        print(f"[FETCH VALIDATOR] Invalid status code: {resp.status_code} for {url}")
+        return False
+
+    # 2. Check for proxy authentication errors or rate-limit blocks in the response body
+    body_text = resp.text if resp.text else ""
+    body_lower = body_text[:2000].lower()
+    
+    # We look for common error phrases from residential proxies and cloudflare challenges
+    block_phrases = [
+        "just a moment", 
+        "cloudflare",
+        "challenge",
+        "limit exceeded", 
+        "proxy error", 
+        "unauthorized", 
+        "auth failed", 
+        "authentication required", 
+        "rate limit",
+        "block page",
+        "please wait"
+    ]
+    for phrase in block_phrases:
+        if phrase in body_lower:
+            print(f"[FETCH VALIDATOR] Block phrase '{phrase}' detected in body for {url}")
+            return False
+
+    # 3. If requesting a JSON endpoint and got 200 OK, verify it's actual parseable JSON
+    if ".json" in url and resp.status_code == 200:
+        try:
+            resp.json()
+        except Exception as e:
+            print(f"[FETCH VALIDATOR] JSON parsing failed for {url}: {e}")
+            return False
+
+    return True
+
 async def stealth_fetch(
     url: str,
     method: str = "GET",
@@ -206,17 +248,24 @@ async def stealth_fetch(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     }
 
+    # 1. Try with the shared session if provided
     if session:
-        # Re-use existing session. Cookies are managed by session.cookies.
-        return await session.request(
-            method=method,
-            url=url,
-            headers=headers,
-            allow_redirects=allow_redirects,
-            timeout=timeout,
-        )
+        try:
+            resp = await session.request(
+                method=method,
+                url=url,
+                headers=headers,
+                allow_redirects=allow_redirects,
+                timeout=timeout,
+            )
+            if is_valid_response(resp, url):
+                return resp
+            else:
+                print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
+        except Exception as e:
+            print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
 
-    # Fallback when no session is passed (creating a transient session)
+    # 2. Fallback / Transient configuration loop (Proxy then Direct)
     proxy = get_healthy_proxy()
     configs = []
     if proxy:
@@ -251,16 +300,11 @@ async def stealth_fetch(
                         timeout=current_timeout,
                     )
                 
-                if resp.status_code == 403:
-                    last_error = f"[{label}] 403 Forbidden (Blocked by Network Security)"
+                if is_valid_response(resp, url):
+                    return resp
+                else:
+                    last_error = f"[{label}] Invalid response (validation failed)"
                     continue
-                
-                body_lower = resp.text[:500].lower() if resp.text else ""
-                if "just a moment" in body_lower or "challenge" in body_lower:
-                    last_error = f"[{label}] Cloudflare Challenge detected"
-                    continue
-                
-                return resp
             except Exception as e:
                 last_error = f"[{label}] {e}"
                 continue
