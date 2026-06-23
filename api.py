@@ -250,20 +250,29 @@ async def stealth_fetch(
 
     # 1. Try with the shared session if provided
     if session:
-        try:
-            resp = await session.request(
-                method=method,
-                url=url,
-                headers=headers,
-                allow_redirects=allow_redirects,
-                timeout=timeout,
-            )
-            if is_valid_response(resp, url):
-                return resp
-            else:
-                print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
-        except Exception as e:
-            print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
+        for attempt in range(3):
+            try:
+                resp = await session.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    allow_redirects=allow_redirects,
+                    timeout=timeout,
+                )
+                if resp.status_code == 429:
+                    wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
+                    print(f"[STEALTH] Shared session got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                
+                if is_valid_response(resp, url):
+                    return resp
+                else:
+                    print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
+                    break
+            except Exception as e:
+                print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
+                break
 
     # 2. Fallback / Transient configuration loop (Proxy then Direct)
     proxy = get_healthy_proxy()
@@ -285,29 +294,36 @@ async def stealth_fetch(
     for proxies_config, label in configs:
         current_timeout = 8.0 if label == "Proxy" else timeout
         for impersonation in IMPERSONATIONS:
-            try:
-                async with cffi_requests.AsyncSession(
-                    impersonate=impersonation,
-                    proxies=proxies_config,
-                    verify=False,
-                    timeout=current_timeout,
-                ) as sess:
-                    resp = await sess.request(
-                        method=method,
-                        url=url,
-                        headers=headers,
-                        allow_redirects=allow_redirects,
+            for attempt in range(3):
+                try:
+                    async with cffi_requests.AsyncSession(
+                        impersonate=impersonation,
+                        proxies=proxies_config,
+                        verify=False,
                         timeout=current_timeout,
-                    )
-                
-                if is_valid_response(resp, url):
-                    return resp
-                else:
-                    last_error = f"[{label}] Invalid response (validation failed)"
-                    continue
-            except Exception as e:
-                last_error = f"[{label}] {e}"
-                continue
+                    ) as sess:
+                        resp = await sess.request(
+                            method=method,
+                            url=url,
+                            headers=headers,
+                            allow_redirects=allow_redirects,
+                            timeout=current_timeout,
+                        )
+                    
+                    if resp.status_code == 429:
+                        wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
+                        print(f"[STEALTH] [{label}] Got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                        
+                    if is_valid_response(resp, url):
+                        return resp
+                    else:
+                        last_error = f"[{label}] Invalid response (validation failed)"
+                        break
+                except Exception as e:
+                    last_error = f"[{label}] {e}"
+                    break
                 
     raise Exception(f"All fetch attempts failed. Last error: {last_error}")
 
@@ -501,6 +517,9 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
         return res
 
     try:
+        # Uncached requests: introduce a small staggered start delay to prevent hitting rate limits in bursts
+        await asyncio.sleep(random.uniform(0.1, 1.5))
+        
         # Resolve shortlinks (redd.it or /s/ shared links)
         resolved = url
         if "redd.it" in url or "/s/" in url:
