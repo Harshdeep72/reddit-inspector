@@ -40,6 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Export Buttons
     const exportCsvBtn = document.getElementById("export-csv");
     const exportJsonBtn = document.getElementById("export-json");
+    const exportExcelBtn = document.getElementById("export-excel");
     
     // Global job details cache
     let currentJobId = null;
@@ -521,6 +522,89 @@ document.addEventListener("DOMContentLoaded", () => {
         const link = document.createElement("a");
         link.setAttribute("href", dataStr);
         link.setAttribute("download", `reddit_audit_${currentJobId || "export"}.json`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    });
+
+    exportExcelBtn.addEventListener("click", () => {
+        if (jobResults.length === 0) return;
+        
+        let tabText = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head>
+                <!--[if gte mso 9]>
+                <xml>
+                    <x:ExcelWorkbook>
+                        <x:ExcelWorksheets>
+                            <x:ExcelWorksheet>
+                                <x:Name>Reddit Audit</x:Name>
+                                <x:WorksheetOptions>
+                                    <x:DisplayGridlines/>
+                                </x:WorksheetOptions>
+                            </x:ExcelWorksheet>
+                        </x:ExcelWorksheets>
+                    </x:ExcelWorkbook>
+                </xml>
+                <![endif]-->
+                <meta charset="utf-8">
+                <style>
+                    th { background-color: #8b5cf6; color: white; font-weight: bold; }
+                    td, th { border: 0.5pt solid #ccc; padding: 6px 10px; font-family: Arial, sans-serif; font-size: 10pt; }
+                </style>
+            </head>
+            <body>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Content Type</th>
+                            <th>URL</th>
+                            <th>Status</th>
+                            <th>Author</th>
+                            <th>Author Status</th>
+                            <th>Subreddit</th>
+                            <th>Score</th>
+                            <th>Title/Body Preview</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        jobResults.forEach(r => {
+            const type = r.type || "unknown";
+            const url = r.url;
+            const status = r.status || "error";
+            const author = r.author?.username || r.data?.author || "unknown";
+            const authorStatus = r.author?.status || "unknown";
+            const sub = r.data?.subreddit || "unknown";
+            const detailText = r.data?.title || r.data?.body_preview || "";
+            const score = r.data?.score || 0;
+            
+            tabText += `
+                <tr>
+                    <td>${escapeHtml(type.toUpperCase())}</td>
+                    <td>${escapeHtml(url)}</td>
+                    <td>${escapeHtml(status.toUpperCase())}</td>
+                    <td>u/${escapeHtml(author)}</td>
+                    <td>${escapeHtml(authorStatus.toUpperCase())}</td>
+                    <td>r/${escapeHtml(sub)}</td>
+                    <td>${score}</td>
+                    <td>${escapeHtml(detailText)}</td>
+                </tr>
+            `;
+        });
+        
+        tabText += `
+                    </tbody>
+                </table>
+            </body>
+            </html>
+        `;
+        
+        const blob = new Blob([tabText], { type: "application/vnd.ms-excel;charset=utf-8;" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.setAttribute("download", `reddit_audit_${currentJobId || "export"}.xls`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
