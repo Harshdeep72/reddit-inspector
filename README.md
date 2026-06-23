@@ -89,6 +89,9 @@ Once all URL contents have been resolved, the backend performs user profile veri
    - If HTML page contains `"suspended"` or `"suspension"`, the user is **suspended/banned**.
    - Otherwise, the user is **deleted**.
 
+### E. Pullpush Direct Debug Endpoint
+We exposed a direct testing endpoint `/debug/pullpush/{post_id}` (supporting an optional `?comment_id={comment_id}`) to query and inspect the Pullpush archive cache resolver without running full bulk checks.
+
 ---
 
 ## 4. Source Code References
