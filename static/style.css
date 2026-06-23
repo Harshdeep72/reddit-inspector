@@ -4,33 +4,33 @@
 
 /* Design Tokens */
 :root {
-    --bg-main: #0b0f19;
-    --bg-card: rgba(17, 24, 39, 0.7);
-    --bg-card-hover: rgba(26, 36, 56, 0.85);
+    --bg-main: #020204; /* Sleek Premium Pitch-Black */
+    --bg-card: rgba(8, 8, 10, 0.72); /* Translucent Black */
+    --bg-card-hover: rgba(16, 16, 20, 0.85); /* Trans-hover */
     
     /* Neon glow colors */
-    --primary: #6366f1; /* Indigo */
-    --primary-glow: rgba(99, 102, 241, 0.35);
-    --secondary: #06b6d4; /* Cyan */
-    --secondary-glow: rgba(6, 182, 212, 0.35);
+    --primary: #a78bfa; /* Vibrant Violet */
+    --primary-glow: rgba(167, 139, 250, 0.25);
+    --secondary: #22d3ee; /* Electric Cyan */
+    --secondary-glow: rgba(34, 211, 238, 0.25);
     
-    --text-main: #f3f4f6; /* slate-100 */
-    --text-muted: #9ca3af; /* slate-400 */
-    --border: rgba(99, 102, 241, 0.15);
-    --border-focus: rgba(6, 182, 212, 0.5);
+    --text-main: #f9fafb; /* Slate White */
+    --text-muted: #a1a1aa; /* Muted Zinc */
+    --border: rgba(255, 255, 255, 0.08); /* Minimal Border */
+    --border-focus: rgba(34, 211, 238, 0.6);
     
     /* Semantic Status Colors */
     --live: #10b981; /* Emerald */
-    --live-glow: rgba(16, 185, 129, 0.2);
+    --live-glow: rgba(16, 185, 129, 0.12);
     
     --removed: #f43f5e; /* Rose */
-    --removed-glow: rgba(244, 63, 94, 0.2);
+    --removed-glow: rgba(244, 63, 94, 0.12);
     
     --warning: #f59e0b; /* Amber */
-    --warning-glow: rgba(245, 158, 11, 0.2);
+    --warning-glow: rgba(245, 158, 11, 0.12);
     
     --error: #ef4444; /* Red */
-    --error-glow: rgba(239, 68, 68, 0.2);
+    --error-glow: rgba(239, 68, 68, 0.12);
     
     /* Font stacks */
     --font-heading: 'Outfit', sans-serif;
@@ -49,8 +49,9 @@
 body {
     background-color: var(--bg-main);
     background-image: 
-        radial-gradient(at 10% 20%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
-        radial-gradient(at 90% 80%, rgba(6, 182, 212, 0.08) 0px, transparent 50%);
+        radial-gradient(at 0% 0%, rgba(167, 139, 250, 0.15) 0px, transparent 45%),
+        radial-gradient(at 100% 100%, rgba(34, 211, 238, 0.15) 0px, transparent 45%),
+        radial-gradient(at 50% 50%, rgba(167, 139, 250, 0.05) 0px, transparent 60%);
     color: var(--text-main);
     font-family: var(--font-body);
     min-height: 100vh;
@@ -70,12 +71,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.2);
+    background: rgba(167, 139, 250, 0.15);
     border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(6, 182, 212, 0.4);
+    background: rgba(34, 211, 238, 0.4);
 }
 
 /* App Container */
@@ -96,8 +97,11 @@ body {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 16px;
-    backdrop-filter: blur(16px);
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow: 
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+        0 12px 40px 0 rgba(0, 0, 0, 0.85);
 }
 
 .brand {
@@ -190,18 +194,27 @@ body {
     border: 1px solid var(--border);
     border-radius: 16px;
     padding: 1.5rem;
-    backdrop-filter: blur(16px);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow: 
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+        0 12px 40px 0 rgba(0, 0, 0, 0.75);
     transition: var(--transition);
 }
 
 .glass-panel:hover {
     background: var(--bg-card-hover);
-    border-color: rgba(99, 102, 241, 0.25);
+    border-color: rgba(34, 211, 238, 0.2);
+    box-shadow: 
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+        0 12px 40px 0 rgba(0, 0, 0, 0.85);
 }
 
 .card-glow:hover {
-    box-shadow: 0 0 25px rgba(99, 102, 241, 0.1);
+    box-shadow: 
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+        0 0 30px rgba(34, 211, 238, 0.15),
+        0 12px 40px 0 rgba(0, 0, 0, 0.85);
 }
 
 .section-title {
@@ -234,7 +247,7 @@ body {
 
 .form-group input,
 .form-group textarea {
-    background: rgba(0, 0, 0, 0.25);
+    background: rgba(0, 0, 0, 0.65);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 0.75rem;
@@ -242,14 +255,17 @@ body {
     font-family: var(--font-body);
     font-size: 0.9rem;
     transition: var(--transition);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 .form-group input:focus,
 .form-group textarea:focus {
     outline: none;
     border-color: var(--secondary);
-    box-shadow: 0 0 10px rgba(6, 182, 212, 0.15);
-    background: rgba(0, 0, 0, 0.35);
+    box-shadow: 
+        inset 0 1px 2px rgba(0, 0, 0, 0.8),
+        0 0 12px rgba(34, 211, 238, 0.25);
+    background: rgba(0, 0, 0, 0.85);
 }
 
 .input-with-icon {
@@ -641,9 +657,9 @@ body {
 
 .filter-tab.active {
     color: white;
-    background: rgba(99, 102, 241, 0.1);
-    border-color: rgba(99, 102, 241, 0.25);
-    box-shadow: 0 0 10px rgba(99, 102, 241, 0.05);
+    background: rgba(167, 139, 250, 0.12);
+    border-color: rgba(167, 139, 250, 0.3);
+    box-shadow: 0 0 10px rgba(167, 139, 250, 0.08);
 }
 
 .toolbar-actions {
@@ -665,7 +681,7 @@ body {
 }
 
 .search-box input {
-    background: rgba(0, 0, 0, 0.25);
+    background: rgba(0, 0, 0, 0.65);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     padding: 0.45rem 0.75rem 0.45rem 2rem;
@@ -673,12 +689,17 @@ body {
     font-size: 0.8rem;
     width: 200px;
     transition: var(--transition);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 .search-box input:focus {
     width: 260px;
     outline: none;
     border-color: var(--secondary);
+    background: rgba(0, 0, 0, 0.85);
+    box-shadow: 
+        inset 0 1px 2px rgba(0, 0, 0, 0.8),
+        0 0 12px rgba(34, 211, 238, 0.25);
 }
 
 /* Dropdown */
@@ -734,7 +755,7 @@ body {
 }
 
 .results-table th {
-    background: rgba(0, 0, 0, 0.15);
+    background: rgba(4, 4, 6, 0.95);
     padding: 0.75rem 1.25rem;
     font-family: var(--font-heading);
     font-weight: 600;
@@ -745,6 +766,7 @@ body {
     position: sticky;
     top: 0;
     z-index: 1;
+    border-bottom: 1.5px solid rgba(255, 255, 255, 0.08);
 }
 
 .results-table td {
@@ -770,9 +792,9 @@ body {
 }
 
 .content-type-badge.post {
-    background: rgba(99, 102, 241, 0.1);
+    background: rgba(167, 139, 250, 0.12);
     color: var(--primary);
-    border: 1px solid rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(167, 139, 250, 0.25);
 }
 
 .content-type-badge.comment {
