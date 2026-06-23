@@ -415,7 +415,18 @@ document.addEventListener("DOMContentLoaded", () => {
                         </div>
                     `;
                 } else {
-                    authorHtml = `<span class="author-name">u/${escapeHtml(authorRaw)}</span>`;
+                    if (pollInterval && includeAuthorCheckbox.checked) {
+                        authorHtml = `
+                            <div class="author-info">
+                                <div class="author-details">
+                                    <span class="author-name">u/${escapeHtml(authorRaw)}</span>
+                                    <span class="author-status unknown">PENDING</span>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        authorHtml = `<span class="author-name">u/${escapeHtml(authorRaw)}</span>`;
+                    }
                 }
             }
 
