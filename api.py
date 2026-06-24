@@ -133,7 +133,10 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                 session.cookies.set("csv", "2", domain=".reddit.com")
                 session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
                 if session_cookie:
+                    print(f"[SESSION] Loaded reddit_session cookie in establish_session (len: {len(session_cookie)}, starts with: {session_cookie[:10]}...)")
                     session.cookies.set("reddit_session", session_cookie, domain=".reddit.com")
+                else:
+                    print("[SESSION] WARNING: No reddit_session cookie found in establish_session!")
                 
                 # Fetch pics subreddit HTML to get JS challenge
                 url = "https://www.reddit.com/r/pics/"
@@ -867,7 +870,10 @@ async def process_bulk_job(job_id: str, urls: list, include_author: bool):
         session.cookies.set("csv", "1", domain=".reddit.com")
         session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
         if session_cookie:
+            print(f"[SESSION] Loaded reddit_session cookie in process_bulk_job fallback (len: {len(session_cookie)}, starts with: {session_cookie[:10]}...)")
             session.cookies.set("reddit_session", session_cookie, domain=".reddit.com")
+        else:
+            print("[SESSION] WARNING: No reddit_session cookie found in process_bulk_job fallback!")
             
     try:
         for i in range(0, total, chunk_size):
