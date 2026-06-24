@@ -297,6 +297,7 @@ async def stealth_fetch(
     }
 
     async with _reddit_semaphore:
+        last_error = None
         # 1. Try with the shared session if provided
         if session:
             # Skip shared session if it was initialized with a proxy that is now disabled
@@ -311,7 +312,8 @@ async def stealth_fetch(
                             timeout=timeout,
                         )
                         if resp.status_code == 429:
-                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
+                            last_error = "[Shared Session] HTTP 429 Too Many Requests"
+                            wait_time = 4.0 * (attempt + 1) + random.uniform(1.0, 4.0)
                             print(f"[STEALTH] Shared session got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
                             await asyncio.sleep(wait_time)
                             continue
@@ -319,9 +321,11 @@ async def stealth_fetch(
                         if is_valid_response(resp, url):
                             return resp
                         else:
+                            last_error = "[Shared Session] Invalid response (validation failed)"
                             print(f"[STEALTH] Shared session returned invalid response for {url}. Falling back to transient configuration.")
                             break
                     except Exception as e:
+                        last_error = f"[Shared Session] {e}"
                         print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
                         if PROXIES and ("timeout" in str(e).lower() or "curl: (28)" in str(e) or "curl: (7)" in str(e)):
                             print(f"[PROXY] Shared session timeout/refusal: {e}. Keeping proxy enabled to let the gateway rotate.")
@@ -353,7 +357,6 @@ async def stealth_fetch(
             
         headers["Cookie"] = "; ".join(cookie_parts)
         
-        last_error = None
         for proxies_config, label in configs:
             # Dynamic check: if proxy was disabled mid-job, skip the Proxy configuration
             if label == "Proxy" and get_healthy_proxy() is None:
@@ -382,7 +385,8 @@ async def stealth_fetch(
                             )
                         
                         if resp.status_code == 429:
-                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.5)
+                            last_error = f"[{label}] HTTP 429 Too Many Requests"
+                            wait_time = 4.0 * (attempt + 1) + random.uniform(1.0, 4.0)
                             print(f"[STEALTH] [{label}] Got 429 for {url}. Attempt {attempt+1}/3. Sleeping {wait_time:.2f}s...")
                             await asyncio.sleep(wait_time)
                             continue
@@ -625,7 +629,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
             sub_match = re.search(r'/r/([^/]+)', clean)
             subreddit = sub_match.group(1) if sub_match else "all"
             
-            fetch_url = f"https://old.reddit.com/r/{subreddit}/comments/{post_id}/.json?limit=0&raw_json=1"
+            fetch_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/.json?limit=0&raw_json=1"
             
             # GET full metadata directly
             try:
@@ -721,7 +725,7 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
             sub_match = re.search(r'/r/([^/]+)', clean)
             subreddit = sub_match.group(1) if sub_match else "all"
             
-            fetch_url = f"https://old.reddit.com/r/{subreddit}/comments/{post_id}/_/{comment_id}.json?limit=0&context=0&raw_json=1"
+            fetch_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/_/{comment_id}.json?limit=0&context=0&raw_json=1"
             
             try:
                 resp = await stealth_fetch(fetch_url, timeout=20.0, session=session)
@@ -837,7 +841,7 @@ async def fetch_author(username: str, session: Optional[cffi_requests.AsyncSessi
         return cached
     
     try:
-        fetch_url = f"https://old.reddit.com/user/{username}/about.json?raw_json=1"
+        fetch_url = f"https://www.reddit.com/user/{username}/about.json?raw_json=1"
         resp = await stealth_fetch(fetch_url, timeout=15.0, session=session)
         
         if resp.status_code == 200:
@@ -868,7 +872,7 @@ async def fetch_author(username: str, session: Optional[cffi_requests.AsyncSessi
                 result = {"username": username, "status": "deleted"}
             else:
                 try:
-                    html_url = f"https://old.reddit.com/user/{username}/"
+                    html_url = f"https://www.reddit.com/user/{username}/"
                     html_resp = await stealth_fetch(html_url, timeout=10.0, session=session)
                     html_text = html_resp.text.lower()
                     if "suspended" in html_text or "suspension" in html_text:
@@ -894,7 +898,7 @@ async def process_bulk_job(job_id: str, urls: list, include_author: bool):
     
     results = []
     total = len(urls)
-    chunk_size = 15  # Process in small chunks to avoid rate limits
+    chunk_size = 5  # Process in small chunks to avoid rate limits
     
     # Establish a shared session for the duration of the job
     proxy = get_healthy_proxy()
