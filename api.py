@@ -1007,4 +1007,5 @@ async def debug_pullpush(post_id: str, comment_id: str = None):
 # ---------- STARTUP ----------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api:app", host="0.0.0.0", port=7860, reload=True)
+    port = int(os.environ.get("PORT", 7860))
+    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=True)
