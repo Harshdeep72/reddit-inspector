@@ -279,7 +279,7 @@ async def stealth_fetch(
     """Unified fetch using curl_cffi with browser impersonation, proxy support, and direct fallback."""
     global _reddit_semaphore, _proxy_disabled_until
     if _reddit_semaphore is None:
-        _reddit_semaphore = asyncio.Semaphore(3)
+        _reddit_semaphore = asyncio.Semaphore(1)
 
     headers = {
         "Accept": "application/json, text/html, */*;q=0.9",
@@ -331,12 +331,13 @@ async def stealth_fetch(
                             print(f"[PROXY] Shared session timeout/refusal: {e}. Keeping proxy enabled to let the gateway rotate.")
                         break
 
-        # 2. Fallback / Transient configuration loop (Proxy then Direct)
+        # 2. Fallback / Transient configuration loop (Proxy, or Direct if no proxy is configured)
         proxy = get_healthy_proxy()
         configs = []
         if proxy:
             configs.append(({"http": proxy, "https": proxy}, "Proxy"))
-        configs.append((None, "Direct"))
+        else:
+            configs.append((None, "Direct"))
         
         # Cookies for transient session
         cookie_parts = ["over18=1"]
