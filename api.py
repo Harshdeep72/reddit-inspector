@@ -131,12 +131,25 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                 # Pre-populate defaults in the session cookie jar
                 session.cookies.set("over18", "1", domain=".reddit.com")
                 session.cookies.set("csv", "2", domain=".reddit.com")
-                session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
-                if session_cookie:
-                    print(f"[SESSION] Loaded reddit_session cookie in establish_session (len: {len(session_cookie)}, starts with: {session_cookie[:10]}...)")
-                    session.cookies.set("reddit_session", session_cookie, domain=".reddit.com")
-                else:
-                    print("[SESSION] WARNING: No reddit_session cookie found in establish_session!")
+                
+                # Check for both standard session cookie and JWT token
+                session_val = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
+                token_val = os.environ.get("REDDIT_TOKEN_V2") or os.environ.get("REDDIT_TOKEN")
+                
+                # If they passed the JWT token inside REDDIT_SESSION by mistake, swap them
+                if session_val and session_val.startswith("eyJ"):
+                    if not token_val:
+                        token_val = session_val
+                        session_val = None
+                
+                if session_val:
+                    session.cookies.set("reddit_session", session_val, domain=".reddit.com")
+                    print(f"[SESSION] Set reddit_session cookie (len: {len(session_val)})")
+                if token_val:
+                    session.cookies.set("token_v2", token_val, domain=".reddit.com")
+                    print(f"[SESSION] Set token_v2 cookie (len: {len(token_val)})")
+                if not session_val and not token_val:
+                    print("[SESSION] WARNING: No reddit_session or token_v2 cookie found in establish_session!")
                 
                 # Fetch pics subreddit HTML to get JS challenge
                 url = "https://www.reddit.com/r/pics/"
@@ -321,11 +334,22 @@ async def stealth_fetch(
         
         # Cookies for transient session
         cookie_parts = ["over18=1"]
-        session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
-        if session_cookie:
-            cookie_parts.append(f"reddit_session={session_cookie}")
-        else:
+        session_val = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
+        token_val = os.environ.get("REDDIT_TOKEN_V2") or os.environ.get("REDDIT_TOKEN")
+        
+        # If they passed the JWT token inside REDDIT_SESSION by mistake, swap them
+        if session_val and session_val.startswith("eyJ"):
+            if not token_val:
+                token_val = session_val
+                session_val = None
+                
+        if session_val:
+            cookie_parts.append(f"reddit_session={session_val}")
+        if token_val:
+            cookie_parts.append(f"token_v2={token_val}")
+        if not session_val and not token_val:
             cookie_parts.append("csv=1")
+            
         headers["Cookie"] = "; ".join(cookie_parts)
         
         last_error = None
@@ -868,12 +892,24 @@ async def process_bulk_job(job_id: str, urls: list, include_author: bool):
         # Pre-populate basic cookies
         session.cookies.set("over18", "1", domain=".reddit.com")
         session.cookies.set("csv", "1", domain=".reddit.com")
-        session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
-        if session_cookie:
-            print(f"[SESSION] Loaded reddit_session cookie in process_bulk_job fallback (len: {len(session_cookie)}, starts with: {session_cookie[:10]}...)")
-            session.cookies.set("reddit_session", session_cookie, domain=".reddit.com")
-        else:
-            print("[SESSION] WARNING: No reddit_session cookie found in process_bulk_job fallback!")
+        
+        session_val = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
+        token_val = os.environ.get("REDDIT_TOKEN_V2") or os.environ.get("REDDIT_TOKEN")
+        
+        # If they passed the JWT token inside REDDIT_SESSION by mistake, swap them
+        if session_val and session_val.startswith("eyJ"):
+            if not token_val:
+                token_val = session_val
+                session_val = None
+                
+        if session_val:
+            session.cookies.set("reddit_session", session_val, domain=".reddit.com")
+            print(f"[SESSION] Set reddit_session cookie in fallback (len: {len(session_val)})")
+        if token_val:
+            session.cookies.set("token_v2", token_val, domain=".reddit.com")
+            print(f"[SESSION] Set token_v2 cookie in fallback (len: {len(token_val)})")
+        if not session_val and not token_val:
+            print("[SESSION] WARNING: No reddit_session or token_v2 cookie found in process_bulk_job fallback!")
             
     try:
         for i in range(0, total, chunk_size):
