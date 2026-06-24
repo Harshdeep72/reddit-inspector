@@ -58,8 +58,8 @@ document.addEventListener("DOMContentLoaded", () => {
             // e.g. user-space-name.hf.space -> backend is same domain
             apiBaseInput.value = `${protocol}//${host}`;
         } else {
-            // Default to permanent production Hugging Face API Space
-            apiBaseInput.value = "https://harrry953489-reddit-inspector-api.hf.space";
+            // Default to permanent production Alwaysdata API
+            apiBaseInput.value = "https://bearbellysucks.alwaysdata.net";
         }
     }
     detectApiBase();
