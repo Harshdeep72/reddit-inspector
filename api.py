@@ -129,11 +129,11 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                 )
                 
                 # Pre-populate defaults in the session cookie jar
-                session.cookies.set("over18", "1")
-                session.cookies.set("csv", "2")
+                session.cookies.set("over18", "1", domain=".reddit.com")
+                session.cookies.set("csv", "2", domain=".reddit.com")
                 session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
                 if session_cookie:
-                    session.cookies.set("reddit_session", session_cookie)
+                    session.cookies.set("reddit_session", session_cookie, domain=".reddit.com")
                 
                 # Fetch pics subreddit HTML to get JS challenge
                 url = "https://www.reddit.com/r/pics/"
@@ -863,11 +863,11 @@ async def process_bulk_job(job_id: str, urls: list, include_author: bool):
             timeout=25.0
         )
         # Pre-populate basic cookies
-        session.cookies.set("over18", "1")
-        session.cookies.set("csv", "1")
+        session.cookies.set("over18", "1", domain=".reddit.com")
+        session.cookies.set("csv", "1", domain=".reddit.com")
         session_cookie = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
         if session_cookie:
-            session.cookies.set("reddit_session", session_cookie)
+            session.cookies.set("reddit_session", session_cookie, domain=".reddit.com")
             
     try:
         for i in range(0, total, chunk_size):
