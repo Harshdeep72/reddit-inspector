@@ -211,8 +211,7 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
             except Exception as e:
                 last_error = f"[{label}] {e}"
                 if label == "Proxy" and ("timeout" in str(e).lower() or "curl: (28)" in str(e) or "curl: (7)" in str(e)):
-                    print(f"[PROXY] Disabling proxy for 5 minutes due to session establishment timeout/refusal: {e}")
-                    _proxy_disabled_until = time.time() + 300.0
+                    print(f"[PROXY] Session establishment timeout/refusal: {e}. Keeping proxy enabled to let the gateway rotate.")
                 if session:
                     try:
                         await session.close()
@@ -321,8 +320,7 @@ async def stealth_fetch(
                     except Exception as e:
                         print(f"[STEALTH] Shared session request failed for {url}: {e}. Falling back to transient configuration.")
                         if PROXIES and ("timeout" in str(e).lower() or "curl: (28)" in str(e) or "curl: (7)" in str(e)):
-                            print(f"[PROXY] Disabling proxy for 5 minutes due to shared session timeout/refusal: {e}")
-                            _proxy_disabled_until = time.time() + 300.0
+                            print(f"[PROXY] Shared session timeout/refusal: {e}. Keeping proxy enabled to let the gateway rotate.")
                         break
 
         # 2. Fallback / Transient configuration loop (Proxy then Direct)
@@ -394,8 +392,7 @@ async def stealth_fetch(
                     except Exception as e:
                         last_error = f"[{label}] {e}"
                         if label == "Proxy" and ("timeout" in str(e).lower() or "curl: (28)" in str(e) or "curl: (7)" in str(e)):
-                            print(f"[PROXY] Disabling proxy for 5 minutes due to transient timeout/refusal: {e}")
-                            _proxy_disabled_until = time.time() + 300.0
+                            print(f"[PROXY] Transient timeout/refusal: {e}. Keeping proxy enabled to let the gateway rotate.")
                             proxy_failed = True
                         break
                     
