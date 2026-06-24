@@ -3,12 +3,14 @@
 # ============================================================
 
 import os
+import sys
 import re
 import json
 import time
 import asyncio
 import random
 import uuid
+import traceback
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse, Response
@@ -136,11 +138,10 @@ async def establish_session(proxy: Optional[str] = None) -> cffi_requests.AsyncS
                 session_val = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
                 token_val = os.environ.get("REDDIT_TOKEN_V2") or os.environ.get("REDDIT_TOKEN")
                 
-                # If they passed the JWT token inside REDDIT_SESSION by mistake, swap them
+                # If they passed the JWT token inside REDDIT_SESSION, map it to both cookies for compatibility
                 if session_val and session_val.startswith("eyJ"):
                     if not token_val:
                         token_val = session_val
-                        session_val = None
                 
                 if session_val:
                     session.cookies.set("reddit_session", session_val, domain=".reddit.com")
@@ -233,7 +234,10 @@ def is_valid_response(resp, url: str) -> bool:
         return False
 
     # 2. Check for proxy authentication errors or rate-limit blocks in the response body
-    body_text = resp.text if resp.text else ""
+    try:
+        body_text = resp.text if resp.text else ""
+    except Exception:
+        body_text = ""
     body_lower = body_text[:2000].lower()
     
     # We look for common error phrases from residential proxies and cloudflare challenges
@@ -335,11 +339,10 @@ async def stealth_fetch(
         session_val = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
         token_val = os.environ.get("REDDIT_TOKEN_V2") or os.environ.get("REDDIT_TOKEN")
         
-        # If they passed the JWT token inside REDDIT_SESSION by mistake, swap them
+        # If they passed the JWT token inside REDDIT_SESSION, map it to both cookies for compatibility
         if session_val and session_val.startswith("eyJ"):
             if not token_val:
                 token_val = session_val
-                session_val = None
                 
         if session_val:
             cookie_parts.append(f"reddit_session={session_val}")
@@ -646,10 +649,13 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                 data = resp.json()
                 
                 # Verify JSON structure
-                if not isinstance(data, list) or len(data) == 0 or "data" not in data[0]:
-                    raise ValueError("Invalid JSON response from Reddit API")
+                if not isinstance(data, list) or len(data) == 0 or not isinstance(data[0], dict) or "data" not in data[0]:
+                    raise ValueError("Invalid JSON response structure from Reddit API for post")
                     
                 children = data[0]["data"].get("children", [])
+                if not isinstance(children, list):
+                    raise ValueError("Invalid JSON: children is not a list")
+                    
                 if not children:
                     archive_author = await fetch_author_from_archive(post_id, "post")
                     result = {
@@ -663,6 +669,8 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                     }
                     return await attach_author_and_cache(result)
                     
+                if not isinstance(children[0], dict) or "data" not in children[0]:
+                    raise ValueError("Invalid JSON: children[0] structure is invalid")
                 post_data = children[0]["data"]
                 
                 removed_by = post_data.get("removed_by_category")
@@ -701,6 +709,8 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                 }
                 return await attach_author_and_cache(result)
             except Exception as e:
+                print(f"[CHECK] Parsing exception for post {url}: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
                 return {"url": url, "type": "post", "status": "error", "error": str(e)}
         
         else:  # comment
@@ -730,14 +740,24 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                     
                 data = resp.json()
                 
+                # Verify JSON structure
+                if not isinstance(data, list) or len(data) < 2 or not isinstance(data[0], dict) or "data" not in data[0] or not isinstance(data[1], dict) or "data" not in data[1]:
+                    raise ValueError("Invalid JSON response structure from Reddit API for comment")
+                
                 # Check comment post status
-                post_data = data[0]["data"]["children"][0]["data"]
+                children_0 = data[0]["data"].get("children", [])
+                if not isinstance(children_0, list) or len(children_0) == 0 or not isinstance(children_0[0], dict) or "data" not in children_0[0]:
+                    raise ValueError("Invalid comment JSON: missing post children data")
+                post_data = children_0[0]["data"]
                 post_status = "deleted" if post_data.get("author") == "[deleted]" else (
                     "removed" if post_data.get("removed_by_category") else "active"
                 )
                 
                 # Walk comment tree to locate target comment ID
-                comment_data = walk_comment_tree(data[1]["data"]["children"], comment_id)
+                children_1 = data[1]["data"].get("children", [])
+                if not isinstance(children_1, list):
+                    raise ValueError("Invalid comment JSON: missing comment tree children")
+                comment_data = walk_comment_tree(children_1, comment_id)
                 if not comment_data:
                     archive_author = await fetch_author_from_archive(comment_id, "comment")
                     result = {
@@ -784,12 +804,13 @@ async def check_single_url(url: str, session: Optional[cffi_requests.AsyncSessio
                 }
                 return await attach_author_and_cache(result)
             except Exception as e:
+                print(f"[CHECK] Parsing exception for comment {url}: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
                 return {"url": url, "type": "comment", "status": "error", "error": str(e)}
                 
     except Exception as e:
-        return {"url": url, "type": "unknown", "status": "error", "error": str(e)}
-                
-    except Exception as e:
+        print(f"[CHECK] Outer exception for URL {url}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return {"url": url, "type": "unknown", "status": "error", "error": str(e)}
 
 def walk_comment_tree(tree_list, target_id):
@@ -820,7 +841,10 @@ async def fetch_author(username: str, session: Optional[cffi_requests.AsyncSessi
         resp = await stealth_fetch(fetch_url, timeout=15.0, session=session)
         
         if resp.status_code == 200:
-            data = resp.json().get("data", {})
+            resp_data = resp.json()
+            if not isinstance(resp_data, dict) or "data" not in resp_data:
+                raise ValueError(f"Invalid JSON response structure for user profile: {username}")
+            data = resp_data.get("data", {})
             # A user is suspended if is_suspended is True or if subreddit is None (shadowbanned/suspended on legacy API)
             is_suspended = data.get("is_suspended", False)
             subreddit_data = data.get("subreddit")
@@ -893,11 +917,10 @@ async def process_bulk_job(job_id: str, urls: list, include_author: bool):
         session_val = os.environ.get("REDDIT_SESSION_COOKIE") or os.environ.get("REDDIT_SESSION")
         token_val = os.environ.get("REDDIT_TOKEN_V2") or os.environ.get("REDDIT_TOKEN")
         
-        # If they passed the JWT token inside REDDIT_SESSION by mistake, swap them
+        # If they passed the JWT token inside REDDIT_SESSION, map it to both cookies for compatibility
         if session_val and session_val.startswith("eyJ"):
             if not token_val:
                 token_val = session_val
-                session_val = None
                 
         if session_val:
             session.cookies.set("reddit_session", session_val, domain=".reddit.com")
