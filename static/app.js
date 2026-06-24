@@ -220,6 +220,14 @@ document.addEventListener("DOMContentLoaded", () => {
         pollInterval = setInterval(async () => {
             try {
                 const res = await fetch(`${apiBase}/api/bulk/status/${jobId}`);
+                if (res.status === 404) {
+                    clearInterval(pollInterval);
+                    alert("Job was not found (the server may have restarted). Please submit your request again.");
+                    stateProgress.classList.add("hidden");
+                    stateWelcome.classList.remove("hidden");
+                    resetFormControls();
+                    return;
+                }
                 if (!res.ok) throw new Error("Status Fetch Error");
                 
                 const job = await res.json();
